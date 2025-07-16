@@ -1,5 +1,5 @@
 blueprint:
-  name: Rotate & Backup HVAC Controller (no-template)
+  name: Rotate & Backup HVAC Controller v2
   description: >
     Rotate daily between two HVAC units and hold room between a target
     temperature. If it overheats, it automatically kicks in the secondary
@@ -76,125 +76,99 @@ trigger:
     id: temp_low
 
 action:
-  # ───────────────────────────────
   # 1) DAILY ROTATION
   - choose:
       - conditions:
           - condition: trigger
             id: rotate
         sequence:
-          # toggle helper
           - service: input_boolean.toggle
             target:
               entity_id: !input rotation_helper
 
-          # now branch on helper state to set primary/backup
+          # if helper is OFF → primary = primary_climate, backup = backup_climate
           - choose:
-              # helper OFF → primary = primary_climate
               - conditions:
                   - condition: state
                     entity_id: !input rotation_helper
-                    state: 'off'
+                    state: "off"
                 sequence:
                   - service: climate.set_hvac_mode
-                    target:
-                      entity_id: !input primary_climate
-                    data:
-                      hvac_mode: cool
+                    target: { entity_id: !input primary_climate }
+                    data: { hvac_mode: cool }
                   - service: climate.set_temperature
-                    target:
-                      entity_id: !input primary_climate
-                    data:
-                      temperature: !input target_temp
+                    target: { entity_id: !input primary_climate }
+                    data: { temperature: !input target_temp }
                   - service: climate.set_hvac_mode
-                    target:
-                      entity_id: !input backup_climate
-                    data:
-                      hvac_mode: 'off'
-              # helper ON → primary = backup_climate
-              - conditions:
-                  - condition: state
-                    entity_id: !input rotation_helper
-                    state: 'on'
-                sequence:
-                  - service: climate.set_hvac_mode
-                    target:
-                      entity_id: !input backup_climate
-                    data:
-                      hvac_mode: cool
-                  - service: climate.set_temperature
-                    target:
-                      entity_id: !input backup_climate
-                    data:
-                      temperature: !input target_temp
-                  - service: climate.set_hvac_mode
-                    target:
-                      entity_id: !input primary_climate
-                    data:
-                      hvac_mode: 'off'
+                    target: { entity_id: !input backup_climate }
+                    data: { hvac_mode: "off" }
 
-  # ───────────────────────────────
-  # 2) TEMPERATURE TOO HIGH → TURN ON SECONDARY
+              # if helper is ON → primary = backup_climate, backup = primary_climate
+              - conditions:
+                  - condition: state
+                    entity_id: !input rotation_helper
+                    state: "on"
+                sequence:
+                  - service: climate.set_hvac_mode
+                    target: { entity_id: !input backup_climate }
+                    data: { hvac_mode: cool }
+                  - service: climate.set_temperature
+                    target: { entity_id: !input backup_climate }
+                    data: { temperature: !input target_temp }
+                  - service: climate.set_hvac_mode
+                    target: { entity_id: !input primary_climate }
+                    data: { hvac_mode: "off" }
+
+  # 2) TOO HOT → TURN ON SECONDARY
   - choose:
       - conditions:
           - condition: trigger
             id: temp_high
           - condition: state
             entity_id: !input rotation_helper
-            state: 'off'
+            state: "off"
         sequence:
           - service: climate.set_hvac_mode
-            target:
-              entity_id: !input backup_climate
-            data:
-              hvac_mode: cool
+            target: { entity_id: !input backup_climate }
+            data: { hvac_mode: cool }
           - service: climate.set_temperature
-            target:
-              entity_id: !input backup_climate
-            data:
-              temperature: !input low_temp
+            target: { entity_id: !input backup_climate }
+            data: { temperature: !input low_temp }
+
       - conditions:
           - condition: trigger
             id: temp_high
           - condition: state
             entity_id: !input rotation_helper
-            state: 'on'
+            state: "on"
         sequence:
           - service: climate.set_hvac_mode
-            target:
-              entity_id: !input primary_climate
-            data:
-              hvac_mode: cool
+            target: { entity_id: !input primary_climate }
+            data: { hvac_mode: cool }
           - service: climate.set_temperature
-            target:
-              entity_id: !input primary_climate
-            data:
-              temperature: !input low_temp
+            target: { entity_id: !input primary_climate }
+            data: { temperature: !input low_temp }
 
-  # ───────────────────────────────
-  # 3) TEMPERATURE BACK TO NORMAL → TURN OFF SECONDARY
+  # 3) COOLED → TURN OFF SECONDARY
   - choose:
       - conditions:
           - condition: trigger
             id: temp_low
           - condition: state
             entity_id: !input rotation_helper
-            state: 'off'
+            state: "off"
         sequence:
           - service: climate.set_hvac_mode
-            target:
-              entity_id: !input backup_climate
-            data:
-              hvac_mode: 'off'
+            target: { entity_id: !input backup_climate }
+            data: { hvac_mode: "off" }
+
       - conditions:
           - condition: trigger
             id: temp_low
           - condition: state
             entity_id: !input rotation_helper
-            state: 'on'
+            state: "on"
         sequence:
           - service: climate.set_hvac_mode
-            target:
-              entity_id: !input primary_climate
-            data:
-              hvac_mode: 'off'
+            target: { entity_id: !input primary_climate }
+            data: { hvac_mode: "off" }
