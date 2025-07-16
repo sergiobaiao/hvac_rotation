@@ -1,0 +1,157 @@
+blueprint:
+  name: Rotate & Backup HVAC Controller
+  description: >
+    Daily rotate between two HVAC entities and keep room between
+    a target temperature. If it gets too hot, kick in the backup HVAC
+    until it cools down.
+  domain: automation
+  input:
+    primary_climate:
+      name: Primary HVAC
+      selector:
+        entity:
+          domain: climate
+    backup_climate:
+      name: Backup HVAC
+      selector:
+        entity:
+          domain: climate
+    temperature_sensor:
+      name: Room Temperature Sensor
+      selector:
+        entity:
+          domain: sensor
+    rotation_helper:
+      name: Rotation Helper (Input Boolean)
+      description: >
+        An Input Boolean you must create beforehand to track which HVAC
+        is primary. This automation will toggle it daily.
+      selector:
+        entity:
+          domain: input_boolean
+    rotate_time:
+      name: Daily rotation time
+      description: Time of day to switch primary HVAC.
+      default: "00:00:00"
+      selector:
+        time: {}
+    target_temp:
+      name: Target temperature
+      description: >
+        Temperature the primary HVAC will hold (mid‑point).
+      default: 21
+      selector:
+        number:
+          unit_of_measurement: "°C"
+          min: 5
+          max: 30
+          step: 0.5
+    high_temp:
+      name: High threshold
+      description: >
+        If the room goes above this, the backup HVAC will turn on.
+      default: 23
+      selector:
+        number:
+          unit_of_measurement: "°C"
+          min: 5
+          max: 40
+          step: 0.5
+    low_temp:
+      name: Low threshold
+      description: >
+        Once the room cools below this, the backup HVAC will turn off.
+      default: 20
+      selector:
+        number:
+          unit_of_measurement: "°C"
+          min: 5
+          max: 30
+          step: 0.5
+
+trigger:
+  # 1) Daily rotation trigger
+  - platform: time
+    at: !input rotate_time
+    id: rotate
+  # 2) Backup ON when too hot
+  - platform: numeric_state
+    entity_id: !input temperature_sensor
+    above: !input high_temp
+    id: temp_high
+  # 3) Backup OFF when cooled
+  - platform: numeric_state
+    entity_id: !input temperature_sensor
+    below: !input low_temp
+    id: temp_low
+
+action:
+  # 1) Handle the daily rotation
+  - choose:
+      - conditions:
+          - condition: trigger
+            id: rotate
+        sequence:
+          # toggle the helper so we know which is primary today
+          - service: input_boolean.toggle
+            target:
+              entity_id: !input rotation_helper
+
+          # determine which is now primary
+          - variables:
+              today_primary: >
+                {% if is_state(input.rotation_helper, 'on') %}
+                  {{ input.backup_climate }}
+                {% else %}
+                  {{ input.primary_climate }}
+                {% endif %}
+
+          # ensure the primary is set to COOL at the target temperature
+          - service: climate.set_hvac_mode
+            data:
+              hvac_mode: cool
+            target:
+              entity_id: "{{ today_primary }}"
+
+          - service: climate.set_temperature
+            data:
+              temperature: !input target_temp
+            target:
+              entity_id: "{{ today_primary }}"
+
+          # make sure the backup is OFF at rotation time
+          - service: climate.set_hvac_mode
+            data:
+              hvac_mode: 'off'
+            target:
+              entity_id: !input backup_climate
+
+  # 2) Turn on the backup HVAC if it's too hot
+  - choose:
+      - conditions:
+          - condition: trigger
+            id: temp_high
+        sequence:
+          - service: climate.set_hvac_mode
+            data:
+              hvac_mode: cool
+            target:
+              entity_id: !input backup_climate
+
+          - service: climate.set_temperature
+            data:
+              temperature: !input low_temp
+            target:
+              entity_id: !input backup_climate
+
+  # 3) Turn off the backup HVAC once cooled
+  - choose:
+      - conditions:
+          - condition: trigger
+            id: temp_low
+        sequence:
+          - service: climate.set_hvac_mode
+            data:
+              hvac_mode: 'off'
+            target:
+              entity_id: !input backup_climate
