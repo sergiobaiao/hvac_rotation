@@ -1,8 +1,8 @@
 blueprint:
   name: Rotate & Backup HVAC Controller
   description: >
-    Daily rotate between two HVAC entities and keep room between
-    a target temperature. If it gets too hot, kick in the backup HVAC
+    Daily rotate between two HVAC entities and keep room temperature
+    between a target range. If it gets too hot, kick in the backup HVAC
     until it cools down.
   domain: automation
   input:
@@ -24,21 +24,18 @@ blueprint:
     rotation_helper:
       name: Rotation Helper (Input Boolean)
       description: >
-        An Input Boolean you must create beforehand to track which HVAC
-        is primary. This automation will toggle it daily.
+        Create an input_boolean beforehand; it will toggle daily to
+        decide which HVAC is “primary” that day.
       selector:
         entity:
           domain: input_boolean
     rotate_time:
       name: Daily rotation time
-      description: Time of day to switch primary HVAC.
       default: "00:00:00"
       selector:
         time: {}
     target_temp:
-      name: Target temperature
-      description: >
-        Temperature the primary HVAC will hold (mid‑point).
+      name: Target (mid‑point) temperature
       default: 21
       selector:
         number:
@@ -48,8 +45,6 @@ blueprint:
           step: 0.5
     high_temp:
       name: High threshold
-      description: >
-        If the room goes above this, the backup HVAC will turn on.
       default: 23
       selector:
         number:
@@ -59,8 +54,6 @@ blueprint:
           step: 0.5
     low_temp:
       name: Low threshold
-      description: >
-        Once the room cools below this, the backup HVAC will turn off.
       default: 20
       selector:
         number:
@@ -83,32 +76,36 @@ trigger:
     id: temp_low
 
 action:
-  # 1) Handle the daily rotation
+  # 1) Rotation at the specified time
   - choose:
       - conditions:
           - condition: trigger
             id: rotate
         sequence:
+          # flip the helper
           - service: input_boolean.toggle
             target:
               entity_id: !input rotation_helper
 
-          # determine which is now primary for today
+          # re-calc who is primary/backup _after_ toggle
           - variables:
+              rotation_flag: !input rotation_helper
+              primary_entity: !input primary_climate
+              backup_entity: !input backup_climate
               primary_today: >
-                {% if is_state(!input rotation_helper, 'on') %}
-                  {{ !input backup_climate }}
+                {% if is_state(rotation_flag, 'on') %}
+                  {{ backup_entity }}
                 {% else %}
-                  {{ !input primary_climate }}
+                  {{ primary_entity }}
                 {% endif %}
               backup_today: >
-                {% if is_state(!input rotation_helper, 'on') %}
-                  {{ !input primary_climate }}
+                {% if is_state(rotation_flag, 'on') %}
+                  {{ primary_entity }}
                 {% else %}
-                  {{ !input backup_climate }}
+                  {{ backup_entity }}
                 {% endif %}
 
-          # configure the new primary
+          # set the new primary to COOL @ target_temp
           - service: climate.set_hvac_mode
             target:
               entity_id: "{{ primary_today }}"
@@ -121,29 +118,32 @@ action:
             data:
               temperature: !input target_temp
 
-          # ensure the other one is off
+          # ensure the other unit is OFF
           - service: climate.set_hvac_mode
             target:
               entity_id: "{{ backup_today }}"
             data:
               hvac_mode: 'off'
 
-  # 2) Use the current primary/backups in the temp branches
+  # 2) For any temperature trigger, recalc primary/backup
   - variables:
+      rotation_flag: !input rotation_helper
+      primary_entity: !input primary_climate
+      backup_entity: !input backup_climate
       primary_today: >
-        {% if is_state(!input rotation_helper, 'on') %}
-          {{ !input backup_climate }}
+        {% if is_state(rotation_flag, 'on') %}
+          {{ backup_entity }}
         {% else %}
-          {{ !input primary_climate }}
+          {{ primary_entity }}
         {% endif %}
       backup_today: >
-        {% if is_state(!input rotation_helper, 'on') %}
-          {{ !input primary_climate }}
+        {% if is_state(rotation_flag, 'on') %}
+          {{ primary_entity }}
         {% else %}
-          {{ !input backup_climate }}
+          {{ backup_entity }}
         {% endif %}
 
-  # 2a) Turn on the backup HVAC if it's too hot
+  # 3) Too hot → turn on backup
   - choose:
       - conditions:
           - condition: trigger
@@ -160,7 +160,7 @@ action:
             data:
               temperature: !input low_temp
 
-  # 2b) Turn off the backup HVAC once cooled
+  # 4) Cooled → turn off backup
   - choose:
       - conditions:
           - condition: trigger
