@@ -70,16 +70,13 @@ blueprint:
           step: 0.5
 
 trigger:
-  # 1) Daily rotation trigger
   - platform: time
     at: !input rotate_time
     id: rotate
-  # 2) Backup ON when too hot
   - platform: numeric_state
     entity_id: !input temperature_sensor
     above: !input high_temp
     id: temp_high
-  # 3) Backup OFF when cooled
   - platform: numeric_state
     entity_id: !input temperature_sensor
     below: !input low_temp
@@ -92,66 +89,85 @@ action:
           - condition: trigger
             id: rotate
         sequence:
-          # toggle the helper so we know which is primary today
           - service: input_boolean.toggle
             target:
               entity_id: !input rotation_helper
 
-          # determine which is now primary
+          # determine which is now primary for today
           - variables:
-              today_primary: >
-                {% if is_state(input.rotation_helper, 'on') %}
-                  {{ input.backup_climate }}
+              primary_today: >
+                {% if is_state(!input rotation_helper, 'on') %}
+                  {{ !input backup_climate }}
                 {% else %}
-                  {{ input.primary_climate }}
+                  {{ !input primary_climate }}
+                {% endif %}
+              backup_today: >
+                {% if is_state(!input rotation_helper, 'on') %}
+                  {{ !input primary_climate }}
+                {% else %}
+                  {{ !input backup_climate }}
                 {% endif %}
 
-          # ensure the primary is set to COOL at the target temperature
+          # configure the new primary
           - service: climate.set_hvac_mode
+            target:
+              entity_id: "{{ primary_today }}"
             data:
               hvac_mode: cool
-            target:
-              entity_id: "{{ today_primary }}"
 
           - service: climate.set_temperature
+            target:
+              entity_id: "{{ primary_today }}"
             data:
               temperature: !input target_temp
-            target:
-              entity_id: "{{ today_primary }}"
 
-          # make sure the backup is OFF at rotation time
+          # ensure the other one is off
           - service: climate.set_hvac_mode
+            target:
+              entity_id: "{{ backup_today }}"
             data:
               hvac_mode: 'off'
-            target:
-              entity_id: !input backup_climate
 
-  # 2) Turn on the backup HVAC if it's too hot
+  # 2) Use the current primary/backups in the temp branches
+  - variables:
+      primary_today: >
+        {% if is_state(!input rotation_helper, 'on') %}
+          {{ !input backup_climate }}
+        {% else %}
+          {{ !input primary_climate }}
+        {% endif %}
+      backup_today: >
+        {% if is_state(!input rotation_helper, 'on') %}
+          {{ !input primary_climate }}
+        {% else %}
+          {{ !input backup_climate }}
+        {% endif %}
+
+  # 2a) Turn on the backup HVAC if it's too hot
   - choose:
       - conditions:
           - condition: trigger
             id: temp_high
         sequence:
           - service: climate.set_hvac_mode
+            target:
+              entity_id: "{{ backup_today }}"
             data:
               hvac_mode: cool
-            target:
-              entity_id: !input backup_climate
-
           - service: climate.set_temperature
+            target:
+              entity_id: "{{ backup_today }}"
             data:
               temperature: !input low_temp
-            target:
-              entity_id: !input backup_climate
 
-  # 3) Turn off the backup HVAC once cooled
+  # 2b) Turn off the backup HVAC once cooled
   - choose:
       - conditions:
           - condition: trigger
             id: temp_low
         sequence:
           - service: climate.set_hvac_mode
+            target:
+              entity_id: "{{ backup_today }}"
             data:
               hvac_mode: 'off'
-            target:
-              entity_id: !input backup_climate
